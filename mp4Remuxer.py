@@ -1,106 +1,176 @@
-# -*- coding:utf-8 -*-
+# !/usr/bin/python
+import sys
+
+from PyQt6 import QtGui, QtWidgets
+from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QVBoxLayout, QGroupBox, QFileDialog, \
+    QListWidget, QLabel, QGridLayout, QRadioButton
 
 import os
 import re
 import subprocess
-from tkinter import ttk, filedialog
-from tkinter import *
-# import windnd
-# from functools import partial
-from tkinter.ttk import *
-import ctypes
+
+ffmpeg = ".\\bin\\ffmpeg.exe -i "
 
 
-class Application(Frame):
+class ChooseFileGroup(QGroupBox):  # 1
+    selected_file_path = pyqtSignal(str)
 
-    def __init__(self, master=None):
-        super().__init__(master)  # super()代表的是父类的定义 ，而不是父类的对像
-        self.master = master
-        self.pack(fill=BOTH, expand=True)
+    def __init__(self):
+        super(ChooseFileGroup, self).__init__()
 
-        self.mkv_path = None
-        self.out_folder_path = None
-        self.stream_info_listbox = None
-        self.ac3_switch = None
+        self.setTitle("选择视频文件")
+        self.setAcceptDrops(True)  # 2
 
-        self.create_widget()
+        self.choose_file_label = QLabel("* 支持直接拖拽视频文件到此处")
+        self.choose_file_btn = QPushButton('选择', self)
+        self.choose_file_btn.clicked.connect(self.choose_file_event)
+        self.choose_file_line = QLineEdit()
+        self.choose_file_line.setReadOnly(True)
+        # self.LineEdit.setPlaceholderText("拖拽文件到此处也可")
 
-    def create_widget(self):
-        # global photo  # 定义为全局变量
+        self.grid = QGridLayout()
+        self.grid.addWidget(self.choose_file_label, 0, 0, 1, 2)
+        self.grid.addWidget(self.choose_file_btn, 1, 0)
+        self.grid.addWidget(self.choose_file_line, 1, 1)
+        self.setLayout(self.grid)
 
-        frame_read = Frame(self, relief=SUNKEN, padding=10)
-        frame_read.pack(padx=30, pady=30, fill=X)
-        # Label(frame_read, text="拖拽文件到此处也可以").pack(ipady=10)
-        # windnd.hook_dropfiles(frame_read, func=self.dropfiles)
-        # 选择按钮
-        read_button = ttk.Button(frame_read, text='选择视频文件', command=self.handle_read_mkv)
-        read_button.pack(side=LEFT, ipadx=20, ipady=10)
-        # 文件路径
-        self.mkv_path = StringVar()  # 数据绑定
-        mkv_path_entry = Entry(frame_read, textvariable=self.mkv_path)
-        mkv_path_entry.pack(fill=BOTH, padx=30, ipady=12)
-
-        # 视频流选择
-        frame_track = Frame(self)
-        frame_track.pack(padx=30, pady=30, fill=BOTH, expand=True)
-        Label(frame_track, text="选择输出轨道（多选）").pack(pady=10)
-        Label(frame_track, text="【MP4支持切换音轨，PR不支持；TrueHD音轨封装到MP4有兼容问题，默认转码为AC3（有损）；PR无法识别字幕】").pack(pady=10)
-
-        sb = Scrollbar(frame_track)  # 垂直滚动条组件
-        sb.pack(side=RIGHT, fill=Y)  # 设置垂直滚动条显示的位置
-        self.stream_info_listbox = Listbox(frame_track, selectmode=MULTIPLE,
-                                           yscrollcommand=sb.set)  # Listbox组件添加Scrollbar组件的set()方法
-        sb.config(command=self.stream_info_listbox.yview)  # 设置Scrollbar组件的command选项为该组件的yview()方法
-        self.stream_info_listbox.pack(fill=BOTH, expand=True)
-
-        # 输出选项
-        frame_check = Frame(self, padding=10)
-        frame_check.pack(padx=30, fill=X)
-
-        self.ac3_switch = IntVar()
-        Checkbutton(frame_check, text="DTS转码为AC3 - 【MP4支持DTS音频，但PR不支持，默认开启（有损）】",
-                    variable=self.ac3_switch).pack(side=LEFT)
-        self.ac3_switch.set(1)
-
-        frame_output = Frame(self, relief=SUNKEN, padding=10)
-        frame_output.pack(padx=30, pady=30, fill=X)
-
-        save_button = ttk.Button(frame_output, text='确定导出', command=self.export_mp4)
-        save_button.pack(side=RIGHT, ipadx=20, ipady=10)
-
-        # 选择输出文件夹路径
-        folder_button = ttk.Button(frame_output, text='选择目标文件夹', command=self.set_out_folder_path)
-        folder_button.pack(side=LEFT, ipadx=20, ipady=10)
-        self.out_folder_path = StringVar()  # 数据绑定
-        save_path_entry = Entry(frame_output, textvariable=self.out_folder_path)
-        save_path_entry.pack(fill=BOTH, padx=30, ipady=12)
-
-    def handle_read_mkv(self):
-        mkv_path = filedialog.askopenfilename(title="请选择视频文件",
-                                              filetypes=[('视频', '*.mkv'), ('视频', '*.mov'), ('视频', '*.mp4'),
-                                                         ('其它视频', '*.*')])
-        if len(mkv_path) < 6:
+    def choose_file_event(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "选择视频文件", "/", "视频(*.mkv *.mov *.mp4);;其它视频(*.*)")
+        print(file_path)
+        if len(file_path) < 3:
             return
-        self.mkv_path.set(mkv_path)
-        self.out_folder_path.set(os.path.dirname(mkv_path))
+        self.set_path(file_path)
 
-        info = read_stream_info(mkv_path)
-        self.stream_info_listbox.delete(0, END)
+    def dragEnterEvent(self, QDragEnterEvent):  # 3
+        # print('Drag Enter')
+        if QDragEnterEvent.mimeData().hasText():
+            QDragEnterEvent.acceptProposedAction()
+
+    def dropEvent(self, QDropEvent):  # 6
+        # 多个文件只获取第一个
+        file_list = str.split(QDropEvent.mimeData().text(), "\n")
+        if len(file_list) < 1:
+            return
+        # print(file_list)
+        file_path = file_list[0][8:].strip()  # 'file:///C:/Tools/mp4Remuxer/README.md'
+        if len(file_path) < 3:
+            return
+        self.set_path(file_path)
+
+    def set_path(self, file_path):
+        if len(file_path) < 3:
+            return
+        self.choose_file_line.setText(file_path)
+        self.selected_file_path.emit(file_path)
+
+
+class StreamList(QGroupBox):
+    def __init__(self):
+        super(StreamList, self).__init__()
+
+        self.setTitle("选择输出轨道（多选）")
+
+        self.stream_list_label = QLabel("* MP4封装TrueHD编码的音轨有兼容问题，默认转码为AC3（有损）\n"
+                                        "* MP4支持封装多音轨，但PR只能识别出一条音轨\n"
+                                        "* MP4仅支持封装subrip字幕，但PR不能识别")
+        self.stream_list = QListWidget()
+        self.stream_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.MultiSelection)
+
+        self.box = QVBoxLayout()
+        self.box.addWidget(self.stream_list_label)
+        self.box.addWidget(self.stream_list)
+        self.setLayout(self.box)
+
+    def read_video_stream(self, path):
+        # print("read_video_stream", path)
+        # self.out_folder_path.set(os.path.dirname(mkv_path))
+
+        info = read_stream_info(path)
+        self.stream_list.clear()
         for item in info:
-            self.stream_info_listbox.insert(END, item)  # END表示每插入一个都是在最后一个位置
+            self.stream_list.addItem(item)
 
-    # 拖拽文件有BUG无法解决
-    # def dropfiles(self, files): # print(files) for item in files: file_path = item.decode('gbk') #
-    # 多个文件只取第一个 if    #         str(file_path).endswith("mkv"): self.read_mkv(file_path) # self.read_mkv(
-    # os.path.normpath(file_path))    #             return
 
-    def export_mp4(self):
-        # print(self.ac3_switch.get())
-        choose_stream = [(self.stream_info_listbox.get(i)) for i in self.stream_info_listbox.curselection()]
+class OutputSetting(QGroupBox):
+    def __init__(self):
+        super(OutputSetting, self).__init__()
+
+        self.setTitle("输出设置")
+
+        self.dts2ac3_btn = QRadioButton('DTS转码为AC3', self)
+        self.dts2ac3_btn.setChecked(True)
+        self.dts2ac3_label = QLabel("* MP4支持DTS编码的音轨，但PR不支持，默认开启（有损）")
+
+        self.choose_export_dir_btn = QPushButton('选择文件夹', self)
+        self.choose_export_dir_btn.clicked.connect(self.choose_export_dir_btn_event)
+        self.choose_export_dir_line = QLineEdit()
+
+        self.grid = QGridLayout()
+        self.grid.addWidget(self.dts2ac3_btn, 0, 0)
+        self.grid.addWidget(self.dts2ac3_label, 0, 1)
+        self.grid.addWidget(self.choose_export_dir_btn, 2, 0)
+        self.grid.addWidget(self.choose_export_dir_line, 2, 1)
+        self.setLayout(self.grid)
+
+    def choose_export_dir_btn_event(self):
+        export_dir = QFileDialog.getExistingDirectory(self)
+        print(export_dir)
+        if len(export_dir) < 1:
+            return
+        self.choose_export_dir_line.setText(export_dir)
+
+    def generate_default_export_dir(self, path):
+        self.choose_export_dir_line.setText(os.path.dirname(path))
+
+
+class Application(QWidget):
+    def __init__(self):
+        super(Application, self).__init__()
+
+        self.choose_file = ChooseFileGroup()
+        self.stream_list = StreamList()
+        self.export_setting = OutputSetting()
+
+        self.confirm_export_btn = QPushButton('确定导出', self)
+        self.confirm_export_btn.clicked.connect(self.confirm_export_event)
+
+        self.box = QVBoxLayout()
+        self.box.addWidget(self.choose_file)
+        self.box.addWidget(self.stream_list)
+        self.box.addWidget(self.export_setting)
+        self.box.addWidget(self.confirm_export_btn)
+        self.setLayout(self.box)
+
+        # 选择文件后触发
+        self.choose_file.selected_file_path.connect(self.stream_list.read_video_stream)
+        self.choose_file.selected_file_path.connect(self.export_setting.generate_default_export_dir)
+
+    def confirm_export_event(self):
+        mkv_path = self.choose_file.choose_file_line.text()
+        mp4_name = get_mp4_name(mkv_path)
+        # print(mkv_path, mp4_name)
+        if len(mp4_name) < 3:
+            return
+
+        dts2ac3_switch = self.export_setting.dts2ac3_btn.isChecked()
+        # print(dts2ac3_switch)
+
+        export_dir = self.export_setting.choose_export_dir_line.text()
+        # print(export_dir)
+        if len(export_dir) < 3:
+            return
+
+        selected_streams = [(item.data()) for item in self.stream_list.stream_list.selectedIndexes()]
+        # print(choose_stream)
+        if len(selected_streams) < 1:
+            return
+
         export_confing = ""
         audio_config = ""
         audio_index = 0
-        for item in choose_stream:
+        hdmv_pgs_subtitle = False
+        for item in selected_streams:
             # print(item)
             # Stream #0:0: Video: hevc (Main 10)
             # Stream #0:1(eng): Audio: truehd
@@ -108,34 +178,30 @@ class Application(Frame):
             if ": Audio:" in item:
                 if ": Audio: truehd" in item:
                     audio_config += " -c:a:" + str(audio_index) + " ac3"
-                elif self.ac3_switch.get() & (": Audio: dts" in item):
+                    # audio_config += " -c:a:" + str(audio_index) + " ac3" + " -ac:a:" + str(audio_index) + " 6"
+                elif dts2ac3_switch & (": Audio: dts" in item):
                     audio_config += " -c:a:" + str(audio_index) + " ac3"
                 audio_index += 1
-        # print(export_confing, audio_config)
+            if ": Subtitle: hdmv_pgs_subtitle" in item:
+                hdmv_pgs_subtitle = True
 
+        # print(export_confing, audio_config)
+        if hdmv_pgs_subtitle:
+            return
         if len(export_confing) < 6:
             return
-        if len(self.out_folder_path.get()) < 3:
-            return
-        mp4_name = get_mp4_name(self.mkv_path.get())
-        if len(mp4_name) < 3:
-            return
 
-        exe_cmd(".\\bin\\ffmpeg.exe -i " + "\"{}\"".format(self.mkv_path.get())
+        mkdir(export_dir)
+        exe_cmd(ffmpeg + format_path_quotes(mkv_path)
                 + export_confing + " -c:v copy -c:a copy -c:s mov_text" + audio_config + " " +
-                "\"{}\"".format(self.out_folder_path.get() + os.sep + mp4_name))
-
-    def set_out_folder_path(self):
-        folder_path = filedialog.askdirectory()
-        # print(root_path)
-        self.out_folder_path.set(folder_path)
+                format_path_quotes(export_dir + os.sep + mp4_name))
 
 
-#
-# def mkdir(path):
-#     # makedirs 创建文件时如果路径不存在会创建这个路径
-#     if not os.path.exists(path):
-#         os.mkdir(path)
+def mkdir(path):
+    # mkdir 路径不存在会创建最低级路径
+    # makedirs 路径不存在会创建多级完整路径
+    if not os.path.exists(path):
+        os.makedirs(path)
 
 
 def get_mp4_name(path):
@@ -146,7 +212,7 @@ def get_mp4_name(path):
 
 
 def get_cmd_result(cmd):
-    # print("cmd: ", cmd)
+    print("cmd: ", cmd)
     # 标准输出和错误输出合并，只需要将stderr参数设置为subprocess.STDOUT：
     # 需设置encoding，默认为byte数组
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8")
@@ -156,15 +222,12 @@ def get_cmd_result(cmd):
 
 
 def exe_cmd(cmd):
-    # 标准输出和错误输出合并，只需要将stderr参数设置为subprocess.STDOUT：
-    # 需设置encoding，默认为byte数组
-    # print(cmd)
+    print("cmd: ", cmd)
     subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
 
 
 def read_stream_info(path):
-    # 文件路径可能有空格需加引号
-    res = get_cmd_result(".\\bin\\ffmpeg.exe -i " + "\"{}\"".format(path))
+    res = get_cmd_result(ffmpeg + format_path_quotes(path))
     res_arr = res.split("\n")
     stream_info = []
     for line in res_arr:
@@ -172,23 +235,29 @@ def read_stream_info(path):
         if line.startswith("  Stream #"):
             stream_info.append(line.strip())
         if line.startswith("      title           :"):
-            # 如果有title信息添加到最后一行
+            # 如果有title信息添加到该行末尾
             stream_info[-1] += line.strip().replace("title           :", "  --  ")
     return stream_info
 
 
+def format_path_quotes(path):
+    # 文件路径可能有空格需加引号
+    return "\"{}\"".format(path)
+
+
+def main():
+    app = QApplication(sys.argv)
+    w = Application()
+    w.setWindowTitle('mp4Remuxer 2.0 - bilibili@李昂不是Leon')
+    w.resize(888, 888)
+    # 窗口居中
+    qr = w.frameGeometry()
+    cp = QtGui.QGuiApplication.primaryScreen().availableGeometry().center()
+    qr.moveCenter(cp)
+    w.move(qr.topLeft())
+    w.show()
+    sys.exit(app.exec())
+
+
 if __name__ == '__main__':
-    self = Tk()
-    self.title("mp4Remuxer - bilibili@李昂的4K视界")
-    self.geometry("1366x1000")
-    # # 告诉操作系统使用程序自身的dpi适配
-    ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    # 获取屏幕的缩放因子
-    scale_factor = ctypes.windll.shcore.GetScaleFactorForDevice(0)
-    # print(scale_factor)
-    # 设置程序缩放
-    self.tk.call('tk', 'scaling', scale_factor / 75)
-
-    app = Application(master=self)
-
-    self.mainloop()
+    main()
