@@ -37,7 +37,7 @@ class ChooseFileGroup(QGroupBox):  # 1
 
     def choose_file_event(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "选择视频文件", "/", "视频(*.mkv *.mov *.mp4);;其它视频(*.*)")
-        print(file_path)
+        # print(file_path)
         if len(file_path) < 3:
             return
         self.set_path(file_path)
@@ -92,9 +92,9 @@ class StreamList(QGroupBox):
             self.stream_list.addItem(item)
 
 
-class OutputSetting(QGroupBox):
+class ExportSetting(QGroupBox):
     def __init__(self):
-        super(OutputSetting, self).__init__()
+        super(ExportSetting, self).__init__()
 
         self.setTitle("输出设置")
 
@@ -115,7 +115,7 @@ class OutputSetting(QGroupBox):
 
     def choose_export_dir_btn_event(self):
         export_dir = QFileDialog.getExistingDirectory(self)
-        print(export_dir)
+        # print(export_dir)
         if len(export_dir) < 1:
             return
         self.choose_export_dir_line.setText(export_dir)
@@ -130,16 +130,22 @@ class Application(QWidget):
 
         self.choose_file = ChooseFileGroup()
         self.stream_list = StreamList()
-        self.export_setting = OutputSetting()
+        self.export_setting = ExportSetting()
 
-        self.confirm_export_btn = QPushButton('确定导出', self)
-        self.confirm_export_btn.clicked.connect(self.confirm_export_event)
+        self.export_mp4_btn = QPushButton('导出MP4', self)
+        self.export_mp4_btn.clicked.connect(self.confirm_export_event)
+
+        self.export_srt_label = QLabel("* 单独导出srt字幕，方便导入PR中\n* 仅支持subrip(srt)字幕\n* 每次只能选中一个字幕流")
+        self.export_srt_btn = QPushButton('导出SRT', self)
+        self.export_srt_btn.clicked.connect(self.export_srt_event)
 
         self.box = QVBoxLayout()
         self.box.addWidget(self.choose_file)
         self.box.addWidget(self.stream_list)
         self.box.addWidget(self.export_setting)
-        self.box.addWidget(self.confirm_export_btn)
+        self.box.addWidget(self.export_mp4_btn)
+        self.box.addWidget(self.export_srt_label)
+        self.box.addWidget(self.export_srt_btn)
         self.setLayout(self.box)
 
         # 选择文件后触发
@@ -150,51 +156,50 @@ class Application(QWidget):
         mkv_path = self.choose_file.choose_file_line.text()
         mp4_name = get_mp4_name(mkv_path)
         # print(mkv_path, mp4_name)
+        if len(mkv_path) < 3:
+            return
         if len(mp4_name) < 3:
             return
-
-        dts2ac3_switch = self.export_setting.dts2ac3_btn.isChecked()
-        # print(dts2ac3_switch)
 
         export_dir = self.export_setting.choose_export_dir_line.text()
         # print(export_dir)
         if len(export_dir) < 3:
             return
 
-        selected_streams = [(item.data()) for item in self.stream_list.stream_list.selectedIndexes()]
-        # print(choose_stream)
-        if len(selected_streams) < 1:
-            return
+        stream_config, audio_config = parse_export_confing(self.stream_list.stream_list,
+                                                           self.export_setting.dts2ac3_btn.isChecked())
 
-        export_confing = ""
-        audio_config = ""
-        audio_index = 0
-        hdmv_pgs_subtitle = False
-        for item in selected_streams:
-            # print(item)
-            # Stream #0:0: Video: hevc (Main 10)
-            # Stream #0:1(eng): Audio: truehd
-            export_confing += " -map " + re.findall(r"Stream #(\d+:\d+)[:([]", item)[0]
-            if ": Audio:" in item:
-                if ": Audio: truehd" in item:
-                    audio_config += " -c:a:" + str(audio_index) + " ac3"
-                    # audio_config += " -c:a:" + str(audio_index) + " ac3" + " -ac:a:" + str(audio_index) + " 6"
-                elif dts2ac3_switch & (": Audio: dts" in item):
-                    audio_config += " -c:a:" + str(audio_index) + " ac3"
-                audio_index += 1
-            if ": Subtitle: hdmv_pgs_subtitle" in item:
-                hdmv_pgs_subtitle = True
-
-        # print(export_confing, audio_config)
-        if hdmv_pgs_subtitle:
-            return
-        if len(export_confing) < 6:
+        if len(stream_config) < 6:
             return
 
         mkdir(export_dir)
         exe_cmd(ffmpeg + format_path_quotes(mkv_path)
-                + export_confing + " -c:v copy -c:a copy -c:s mov_text" + audio_config + " " +
+                + stream_config + " -c:v copy -c:a copy -c:s mov_text" + audio_config + " " +
                 format_path_quotes(export_dir + os.sep + mp4_name))
+
+    def export_srt_event(self):
+        mkv_path = self.choose_file.choose_file_line.text()
+        srt_name = get_srt_name(mkv_path)
+        # print(mkv_path, srt_name)
+        if len(mkv_path) < 3:
+            return
+        if len(srt_name) < 3:
+            return
+
+        export_dir = self.export_setting.choose_export_dir_line.text()
+        # print(export_dir)
+        if len(export_dir) < 3:
+            return
+
+        stream_config = parse_export_srt_confing(self.stream_list.stream_list)
+        # print(stream_config)
+
+        if len(stream_config) < 6:
+            return
+
+        mkdir(export_dir)
+        exe_cmd(ffmpeg + format_path_quotes(mkv_path) + stream_config
+                + " " + format_path_quotes(export_dir + os.sep + srt_name))
 
 
 def mkdir(path):
@@ -204,11 +209,67 @@ def mkdir(path):
         os.makedirs(path)
 
 
+def parse_export_confing(stream_list, dts2ac3):
+    if stream_list is None:
+        return "", ""
+    selected_streams = [(item.data()) for item in stream_list.selectedIndexes()]
+    if len(selected_streams) < 1:
+        return "", ""
+
+    dts2ac3_switch = dts2ac3 if dts2ac3 else False
+
+    stream_confing = ""
+    audio_config = ""
+    audio_index = 0
+    hdmv_pgs_subtitle = False
+    for item in selected_streams:
+        # print(item)
+        # Stream #0:0: Video: hevc (Main 10)
+        # Stream #0:1(eng): Audio: truehd
+        stream_confing += " -map " + re.findall(r"Stream #(\d+:\d+)[:([]", item)[0]
+        if ": Audio:" in item:
+            if ": Audio: truehd" in item:
+                audio_config += " -c:a:" + str(audio_index) + " ac3"
+                # audio_config += " -c:a:" + str(audio_index) + " ac3" + " -ac:a:" + str(audio_index) + " 6"
+            elif dts2ac3_switch & (": Audio: dts" in item):
+                audio_config += " -c:a:" + str(audio_index) + " ac3"
+            audio_index += 1
+        if ": Subtitle: hdmv_pgs_subtitle" in item:
+            hdmv_pgs_subtitle = True
+
+    # print(export_confing, audio_config)
+
+    if hdmv_pgs_subtitle:
+        return "", ""
+    return stream_confing, audio_config
+
+
+def parse_export_srt_confing(stream_list):
+    if stream_list is None:
+        return ""
+    selected_streams = [(item.data()) for item in stream_list.selectedIndexes()]
+    if len(selected_streams) != 1:
+        return ""
+
+    stream_confing = ""
+    # Stream #0:2(eng): Subtitle: subrip (default)
+    if ": Subtitle: subrip" in selected_streams[0]:
+        stream_confing = " -map " + re.findall(r"Stream #(\d+:\d+)[:([]", selected_streams[0])[0]
+    return stream_confing
+
+
 def get_mp4_name(path):
     base_name = os.path.split(path)[1] if path else ""
     base_name = os.path.splitext(base_name)[0] if base_name else ""
     # print(base_name)
     return (base_name + "_remux.mp4") if base_name else ""
+
+
+def get_srt_name(path):
+    base_name = os.path.split(path)[1] if path else ""
+    base_name = os.path.splitext(base_name)[0] if base_name else ""
+    # print(base_name)
+    return (base_name + "_remux.srt") if base_name else ""
 
 
 def get_cmd_result(cmd):
@@ -248,7 +309,7 @@ def format_path_quotes(path):
 def main():
     app = QApplication(sys.argv)
     w = Application()
-    w.setWindowTitle('mp4Remuxer 2.0 - bilibili@李昂不是Leon')
+    w.setWindowTitle('mp4Remuxer 2.1 - bilibili@李昂不是Leon')
     w.resize(888, 888)
     # 窗口居中
     qr = w.frameGeometry()
