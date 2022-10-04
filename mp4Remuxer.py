@@ -1,16 +1,17 @@
 # !/usr/bin/python
 import sys
-
-from PyQt6 import QtGui, QtWidgets
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QVBoxLayout, QGroupBox, QFileDialog, \
-    QListWidget, QLabel, QGridLayout, QRadioButton
-
+import requests
 import os
 import re
 import subprocess
+from PyQt6 import QtGui, QtWidgets
+from PyQt6.QtCore import pyqtSignal, QUrl
+from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtWidgets import QApplication, QWidget, QPushButton, QLineEdit, QVBoxLayout, QGroupBox, QFileDialog, \
+    QListWidget, QLabel, QGridLayout, QRadioButton, QHBoxLayout, QButtonGroup, QMessageBox
 
 ffmpeg = ".\\bin\\ffmpeg.exe -i "
+version = "v2.2"
 
 
 class ChooseFileGroup(QGroupBox):  # 1
@@ -71,9 +72,8 @@ class StreamList(QGroupBox):
 
         self.setTitle("选择输出轨道（多选）")
 
-        self.stream_list_label = QLabel("* MP4封装TrueHD编码的音轨有兼容问题，默认转码为AC3（有损）\n"
-                                        "* MP4支持封装多音轨，但PR只能识别出一条音轨\n"
-                                        "* MP4仅支持封装subrip字幕，但PR不能识别")
+        self.stream_list_label = QLabel("* MP4支持封装多音轨，但PR只能识别出一条音轨\n"
+                                        "* MP4支持封装subrip字幕，但PR不能识别")
         self.stream_list = QListWidget()
         self.stream_list.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.MultiSelection)
 
@@ -98,19 +98,41 @@ class ExportSetting(QGroupBox):
 
         self.setTitle("输出设置")
 
-        self.dts2ac3_btn = QRadioButton('DTS转码为AC3', self)
-        self.dts2ac3_btn.setChecked(True)
-        self.dts2ac3_label = QLabel("* MP4支持DTS编码的音轨，但PR不支持，默认开启（有损）")
+        self.direct_out_btn = QRadioButton('音轨直出', self)
+        self.direct_out_label = QLabel("* 不做任何处理。部分编码MP4不支持，表现为导出文件大小为0，如TrueHD、FLAC等")
+        self.default_recode_btn = QRadioButton('默认转码', self)
+        self.default_recode_label = QLabel("* 将常见的MP4/PR不支持的音轨转码为AC3，如TrueHD、FLAC、DTS、OPUS等（有损）")
+        self.all_recode_btn = QRadioButton('强制转码', self)
+        self.all_recode_label = QLabel("* 碰到一些非主流编码，可以尝试一下（有损）")
+
+        self.audio_radio = QButtonGroup(self)
+        self.audio_radio.addButton(self.direct_out_btn, 0)
+        self.audio_radio.addButton(self.default_recode_btn, 1)
+        self.audio_radio.addButton(self.all_recode_btn, 2)
+        self.default_recode_btn.setChecked(True)
+
+        self.auto_aac_btn = QRadioButton('7.1声道转为AAC', self)
+        self.auto_aac_label = QLabel("* AC3最多支持5.1声道；AAC支持7.1但转码速度较慢")
+        self.auto_aac_btn.setChecked(True)
 
         self.choose_export_dir_btn = QPushButton('选择文件夹', self)
         self.choose_export_dir_btn.clicked.connect(self.choose_export_dir_btn_event)
         self.choose_export_dir_line = QLineEdit()
 
         self.grid = QGridLayout()
-        self.grid.addWidget(self.dts2ac3_btn, 0, 0)
-        self.grid.addWidget(self.dts2ac3_label, 0, 1)
-        self.grid.addWidget(self.choose_export_dir_btn, 2, 0)
-        self.grid.addWidget(self.choose_export_dir_line, 2, 1)
+
+        self.grid.addWidget(self.direct_out_btn, 0, 0)
+        self.grid.addWidget(self.direct_out_label, 0, 1)
+        self.grid.addWidget(self.default_recode_btn, 1, 0)
+        self.grid.addWidget(self.default_recode_label, 1, 1)
+        self.grid.addWidget(self.all_recode_btn, 2, 0)
+        self.grid.addWidget(self.all_recode_label, 2, 1)
+        self.grid.addWidget(QLabel(" "), 3, 0)
+        self.grid.addWidget(self.auto_aac_btn, 4, 0)
+        self.grid.addWidget(self.auto_aac_label, 4, 1)
+        self.grid.addWidget(QLabel(" "), 5, 0)
+        self.grid.addWidget(self.choose_export_dir_btn, 6, 0)
+        self.grid.addWidget(self.choose_export_dir_line, 6, 1)
         self.setLayout(self.grid)
 
     def choose_export_dir_btn_event(self):
@@ -124,6 +146,25 @@ class ExportSetting(QGroupBox):
         self.choose_export_dir_line.setText(os.path.dirname(path))
 
 
+class ExportBtnGroup(QGroupBox):
+    def __init__(self):
+        super(ExportBtnGroup, self).__init__()
+
+        self.export_mp4_btn = QPushButton('导出MP4', self)
+        self.export_srt_btn = QPushButton('导出SRT', self)
+        self.export_mp4_btn.setFixedHeight(40)
+        self.export_srt_btn.setFixedHeight(40)
+        self.export_srt_label = QLabel("* 单独导出srt字幕，方便导入PR中\n"
+                                       "* 仅支持subrip(srt)字幕\n"
+                                       "* 每次只能选中一个字幕轨道")
+
+        self.grid = QHBoxLayout()
+        self.grid.addWidget(self.export_mp4_btn)
+        self.grid.addWidget(self.export_srt_btn)
+        self.grid.addWidget(self.export_srt_label)
+        self.setLayout(self.grid)
+
+
 class Application(QWidget):
     def __init__(self):
         super(Application, self).__init__()
@@ -131,26 +172,21 @@ class Application(QWidget):
         self.choose_file = ChooseFileGroup()
         self.stream_list = StreamList()
         self.export_setting = ExportSetting()
-
-        self.export_mp4_btn = QPushButton('导出MP4', self)
-        self.export_mp4_btn.clicked.connect(self.confirm_export_event)
-
-        self.export_srt_label = QLabel("* 单独导出srt字幕，方便导入PR中\n* 仅支持subrip(srt)字幕\n* 每次只能选中一个字幕流")
-        self.export_srt_btn = QPushButton('导出SRT', self)
-        self.export_srt_btn.clicked.connect(self.export_srt_event)
+        self.export_btn_group = ExportBtnGroup()
 
         self.box = QVBoxLayout()
         self.box.addWidget(self.choose_file)
         self.box.addWidget(self.stream_list)
         self.box.addWidget(self.export_setting)
-        self.box.addWidget(self.export_mp4_btn)
-        self.box.addWidget(self.export_srt_label)
-        self.box.addWidget(self.export_srt_btn)
+        self.box.addWidget(self.export_btn_group)
         self.setLayout(self.box)
 
         # 选择文件后触发
         self.choose_file.selected_file_path.connect(self.stream_list.read_video_stream)
         self.choose_file.selected_file_path.connect(self.export_setting.generate_default_export_dir)
+        # 导出按钮
+        self.export_btn_group.export_mp4_btn.clicked.connect(self.confirm_export_event)
+        self.export_btn_group.export_srt_btn.clicked.connect(self.export_srt_event)
 
     def confirm_export_event(self):
         mkv_path = self.choose_file.choose_file_line.text()
@@ -167,7 +203,8 @@ class Application(QWidget):
             return
 
         stream_config, audio_config = parse_export_confing(self.stream_list.stream_list,
-                                                           self.export_setting.dts2ac3_btn.isChecked())
+                                                           self.export_setting.audio_radio.checkedId(),
+                                                           self.export_setting.auto_aac_btn.isChecked())
 
         if len(stream_config) < 6:
             return
@@ -201,6 +238,18 @@ class Application(QWidget):
         exe_cmd(ffmpeg + format_path_quotes(mkv_path) + stream_config
                 + " " + format_path_quotes(export_dir + os.sep + srt_name))
 
+    def check_update(self):
+        a = requests.get('https://api.github.com/repos/94leon/mp4Remuxer/releases/latest')
+        res = a.json()
+        released_version = res['tag_name'] if res['tag_name'] else ""
+        # print(released_version, released_version > version)
+        if released_version > version:
+            check_update_message_box = QMessageBox.information(self, '提示', '发现新版本' + released_version,
+                                                               QMessageBox.StandardButton.Yes |
+                                                               QMessageBox.StandardButton.Ignore)
+            if check_update_message_box == QMessageBox.StandardButton.Yes:
+                QDesktopServices.openUrl(QUrl("https://www.bilibili.com/video/BV1N3411H72Z/"))
+
 
 def mkdir(path):
     # mkdir 路径不存在会创建最低级路径
@@ -209,15 +258,13 @@ def mkdir(path):
         os.makedirs(path)
 
 
-def parse_export_confing(stream_list, dts2ac3):
+def parse_export_confing(stream_list, audio_radio, auto_aac):
     if stream_list is None:
         return "", ""
     selected_streams = [(item.data()) for item in stream_list.selectedIndexes()]
     if len(selected_streams) < 1:
         return "", ""
-
-    dts2ac3_switch = dts2ac3 if dts2ac3 else False
-
+    default_recode_list = [': Audio: truehd', ': Audio: dts', ': Audio: flac', ': Audio: opus']
     stream_confing = ""
     audio_config = ""
     audio_index = 0
@@ -228,16 +275,23 @@ def parse_export_confing(stream_list, dts2ac3):
         # Stream #0:1(eng): Audio: truehd
         stream_confing += " -map " + re.findall(r"Stream #(\d+:\d+)[:([]", item)[0]
         if ": Audio:" in item:
-            if ": Audio: truehd" in item:
-                audio_config += " -c:a:" + str(audio_index) + " ac3"
-                # audio_config += " -c:a:" + str(audio_index) + " ac3" + " -ac:a:" + str(audio_index) + " 6"
-            elif dts2ac3_switch & (": Audio: dts" in item):
-                audio_config += " -c:a:" + str(audio_index) + " ac3"
+            if audio_radio == 0:
+                continue
+            elif audio_radio == 1 and any(key in item for key in default_recode_list):
+                if auto_aac and ", 7.1," in item:
+                    audio_config += " -c:a:" + str(audio_index) + " aac"
+                else:
+                    audio_config += " -c:a:" + str(audio_index) + " ac3"
+            elif audio_radio == 2:
+                if auto_aac and ", 7.1," in item:
+                    audio_config += " -c:a:" + str(audio_index) + " aac"
+                else:
+                    audio_config += " -c:a:" + str(audio_index) + " ac3"
             audio_index += 1
-        if ": Subtitle: hdmv_pgs_subtitle" in item:
+        elif ": Subtitle: hdmv_pgs_subtitle" in item:
             hdmv_pgs_subtitle = True
 
-    # print(export_confing, audio_config)
+    print(stream_confing, audio_config)
 
     if hdmv_pgs_subtitle:
         return "", ""
@@ -272,26 +326,26 @@ def get_srt_name(path):
     return (base_name + "_remux.srt") if base_name else ""
 
 
+def exe_cmd(cmd):
+    print("cmd:", cmd)
+    subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
+
+
 def get_cmd_result(cmd):
-    print("cmd: ", cmd)
+    print("cmd:", cmd)
     # 标准输出和错误输出合并，只需要将stderr参数设置为subprocess.STDOUT：
     # 需设置encoding，默认为byte数组
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8")
-    res = proc.stdout.read()
+    res = proc.stdout.readlines()
     proc.stdout.close()
     return res
 
 
-def exe_cmd(cmd):
-    print("cmd: ", cmd)
-    subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_CONSOLE)
-
-
 def read_stream_info(path):
-    res = get_cmd_result(ffmpeg + format_path_quotes(path))
-    res_arr = res.split("\n")
+    res_arr = get_cmd_result(ffmpeg + format_path_quotes(path))
     stream_info = []
     for line in res_arr:
+        line = line.replace('\n', '')
         print(line)
         if line.startswith("  Stream #"):
             stream_info.append(line.strip())
@@ -309,7 +363,7 @@ def format_path_quotes(path):
 def main():
     app = QApplication(sys.argv)
     w = Application()
-    w.setWindowTitle('mp4Remuxer 2.1 - bilibili@李昂不是Leon')
+    w.setWindowTitle('mp4Remuxer ' + version + ' - bilibili@李昂不是Leon')
     w.resize(888, 888)
     # 窗口居中
     qr = w.frameGeometry()
@@ -317,6 +371,8 @@ def main():
     qr.moveCenter(cp)
     w.move(qr.topLeft())
     w.show()
+    # 检查更新
+    w.check_update()
     sys.exit(app.exec())
 
 
