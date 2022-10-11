@@ -1,11 +1,15 @@
 # 使用
 
-* 下载mp4Remuxer.zip解压即可
-* "bin"文件夹和mp4Remuxer.exe不能分开！
+* 'bin'文件夹和mp4Remuxer.exe主程序都要下载，放在同一目录下不能分开
+* 更新只需替换mp4Remuxer.exe主程序即可，bin文件夹保持不动
 
 ---
 
 # 更新记录
+
+## v2.3
+
+* 新增批量导出功能
 
 ## v2.2
 
