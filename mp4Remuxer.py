@@ -13,7 +13,7 @@ from Modules.ExportSetting import ExportSetting
 from Modules.StreamList import StreamList
 import Modules.Function as Func
 
-version = "v2.3"
+version = "v2.3.1"
 
 
 class Application(QWidget):
@@ -98,10 +98,13 @@ class Application(QWidget):
                          + " " + Func.format_path_quotes(export_dir + os.sep + srt_name))
 
     def check_update(self):
-        a = requests.get('https://api.github.com/repos/94leon/mp4Remuxer/releases/latest')
-        res = a.json()
-        released_version = res['tag_name'] if res['tag_name'] else ""
-        released_description = res['body'] if res['body'] else ""
+        try:
+            a = requests.get('https://api.github.com/repos/94leon/mp4Remuxer/releases/latest', timeout=2)
+            res = a.json()
+        except requests.exceptions.RequestException:
+            return
+        released_version = res['tag_name'] if 'tag_name' in res else ""
+        released_description = res['body'] if 'body' in res else ""
         # print(released_version, released_version > version)
         if released_version > version:
             check_update_message_box = QMessageBox.information(self, '提示',
